@@ -33,6 +33,13 @@ var (
 	lastJokeTime time.Time
 	jokeCooldown = 5 * time.Second
 
+	goodnightMu       sync.Mutex
+	lastGoodnightTime time.Time
+	goodnightCooldown = 3 * time.Second
+	goodnightMessages = []string{
+		"Goodnight Snore-osaurus Rex.",
+	}
+
 	httpClient = &http.Client{
 		Timeout: 10 * time.Second,
 	}
@@ -115,7 +122,8 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 	responseSent := handlePauseTrigger(s, m) ||
 		handleDadResponse(s, m) ||
 		handleWinLoseTrigger(s, m) ||
-		handleJokeRequest(s, m)
+		handleJokeRequest(s, m) ||
+		handleGoodnightRequest(s, m)
 
 	// Log non-dad-response messages
 	if !responseSent {
@@ -181,6 +189,33 @@ func handleWinLoseTrigger(s *discordgo.Session, m *discordgo.MessageCreate) bool
 
 	slog.Info("Win/lose GIF sent",
 		"event", "win_lose_response",
+		"service", "dadbot",
+		"trigger", msg)
+	return true
+}
+
+func handleGoodnightRequest(s *discordgo.Session, m *discordgo.MessageCreate) bool {
+	msg := strings.ToLower(m.Content)
+	if msg != "good night" && msg != "goodnight" {
+		return false
+	}
+
+	goodnightMu.Lock()
+	if time.Since(lastGoodnightTime) < goodnightCooldown {
+		goodnightMu.Unlock()
+		slog.Debug("Goodnight request rate limited",
+			"event", "goodnight_rate_limited",
+			"service", "dadbot")
+		return false
+	}
+	lastGoodnightTime = time.Now()
+	goodnightMu.Unlock()
+
+	response := goodnightMessages[rand.Intn(len(goodnightMessages))]
+	s.ChannelMessageSend(m.ChannelID, response)
+
+	slog.Info("Bot said goodnight by trigger phrase",
+		"event", "goodnight_triggered",
 		"service", "dadbot",
 		"trigger", msg)
 	return true
