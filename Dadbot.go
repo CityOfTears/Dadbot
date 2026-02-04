@@ -33,10 +33,12 @@ var (
 	lastJokeTime time.Time
 	jokeCooldown = 5 * time.Second
 
-	//goodnight rate limit
 	goodnightMu       sync.Mutex
 	lastGoodnightTime time.Time
-	goodnightCooldown = 10 * time.Second
+	goodnightCooldown = 3 * time.Second
+	goodnightMessages = []string{
+		"Goodnight Snore-osaurus Rex.",
+	}
 
 	httpClient = &http.Client{
 		Timeout: 10 * time.Second,
@@ -194,7 +196,7 @@ func handleWinLoseTrigger(s *discordgo.Session, m *discordgo.MessageCreate) bool
 
 func handleGoodnightRequest(s *discordgo.Session, m *discordgo.MessageCreate) bool {
 	msg := strings.ToLower(m.Content)
-	if msg == "good night" && msg != "goodnight" {
+	if msg != "good night" && msg != "goodnight" {
 		return false
 	}
 
@@ -209,18 +211,16 @@ func handleGoodnightRequest(s *discordgo.Session, m *discordgo.MessageCreate) bo
 	lastGoodnightTime = time.Now()
 	goodnightMu.Unlock()
 
-
-	response := "Goodnight Snore-osaurus Rex."
-
+	response := goodnightMessages[rand.Intn(len(goodnightMessages))]
 	s.ChannelMessageSend(m.ChannelID, response)
 
 	slog.Info("Bot said goodnight by trigger phrase",
-	"event", "goodnight_triggered",
-	"service", "dadbot",
-	"trigger", msg)
+		"event", "goodnight_triggered",
+		"service", "dadbot",
+		"trigger", msg)
 	return true
-
 }
+
 func handleJokeRequest(s *discordgo.Session, m *discordgo.MessageCreate) bool {
 	if strings.ToLower(m.Content) != "tell me a joke" {
 		return false
