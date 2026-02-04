@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"regexp"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -20,9 +21,21 @@ var (
 	token      = flag.String("t", "", "Bot Token")
 	dadRegex   = regexp.MustCompile(`(?i)\bI'?m\s+(.+)`)
 	pauseRegex = regexp.MustCompile(`(?i)\b(cigs|cigarette(s)?|milk)\b`)
-	winRegex   = regexp.MustCompile(`(?i)(can'?t\s+win|keep\s+(losing))`)
-	isPaused   bool
-	pauseEnd   time.Time
+
+	// Pause state protected by mutex to prevent race conditions
+	// when multiple Discord messages are processed concurrently
+	pauseMu  sync.RWMutex
+	isPaused bool
+	pauseEnd time.Time
+
+	// Rate limiting for joke API (one request per 5 seconds)
+	jokeMu       sync.Mutex
+	lastJokeTime time.Time
+	jokeCooldown = 5 * time.Second
+
+	httpClient = &http.Client{
+		Timeout: 10 * time.Second,
+	}
 )
 
 func init() {
@@ -98,12 +111,11 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 		return
 	}
 
-	// Track if any dad-response was sent
-	responseSent := false
-	responseSent = handlePauseTrigger(s, m) || responseSent
-	responseSent = handleWinLoseTrigger(s, m) || responseSent
-	responseSent = handleJokeRequest(s, m) || responseSent
-	responseSent = handleDadResponse(s, m) || responseSent
+	// Process triggers in priority order, stop after first match
+	responseSent := handlePauseTrigger(s, m) ||
+		handleDadResponse(s, m) ||
+		handleWinLoseTrigger(s, m) ||
+		handleJokeRequest(s, m)
 
 	// Log non-dad-response messages
 	if !responseSent {
@@ -118,11 +130,18 @@ func shouldSkipMessage(s *discordgo.Session, m *discordgo.MessageCreate) bool {
 }
 
 func isBotPaused() bool {
-	if isPaused && time.Now().Before(pauseEnd) {
+	pauseMu.RLock()
+	paused := isPaused
+	end := pauseEnd
+	pauseMu.RUnlock()
+
+	if paused && time.Now().Before(end) {
 		return true
 	}
-	if isPaused && time.Now().After(pauseEnd) {
+	if paused && time.Now().After(end) {
+		pauseMu.Lock()
 		isPaused = false
+		pauseMu.Unlock()
 	}
 	return false
 }
@@ -134,10 +153,13 @@ func handlePauseTrigger(s *discordgo.Session, m *discordgo.MessageCreate) bool {
 		response := "Be back in 20, gonna go grab some " + pauseWord
 		s.ChannelMessageSend(m.ChannelID, response)
 
-		isPaused = true
 		randomMinutes := rand.Intn(6)
 		pauseDuration := time.Duration(15+randomMinutes) * time.Minute
+
+		pauseMu.Lock()
+		isPaused = true
 		pauseEnd = time.Now().Add(pauseDuration)
+		pauseMu.Unlock()
 
 		slog.Info("Bot paused by trigger word",
 			"event", "pause_triggered",
@@ -149,38 +171,52 @@ func handlePauseTrigger(s *discordgo.Session, m *discordgo.MessageCreate) bool {
 }
 
 func handleWinLoseTrigger(s *discordgo.Session, m *discordgo.MessageCreate) bool {
-	if winRegex.MatchString(m.Content) {
-		gifLink := "https://tenor.com/view/are-ya-winning-son-gif-18099517"
-		s.ChannelMessageSend(m.ChannelID, gifLink)
-
-		slog.Info("Win/lose GIF sent",
-			"event", "win_lose_response",
-			"service", "dadbot",
-			"trigger", "win_lose_pattern")
-		return true
+	msg := strings.ToLower(m.Content)
+	if msg != "can't win" && msg != "cant win" && msg != "keep losing" {
+		return false
 	}
-	return false
+
+	gifLink := "https://tenor.com/view/are-ya-winning-son-gif-18099517"
+	s.ChannelMessageSend(m.ChannelID, gifLink)
+
+	slog.Info("Win/lose GIF sent",
+		"event", "win_lose_response",
+		"service", "dadbot",
+		"trigger", msg)
+	return true
 }
 
 func handleJokeRequest(s *discordgo.Session, m *discordgo.MessageCreate) bool {
-	if strings.ToLower(m.Content) == "tell me a joke" {
-		joke, err := getDadJoke()
-		if err != nil {
-			s.ChannelMessageSend(m.ChannelID, "Gosh dang joke AI always breakin. Tell Clutch to fix it.")
-			slog.Error("Failed to fetch dad joke",
-				"event", "joke_request_failed",
-				"service", "dadbot",
-				"error", err.Error())
-			return true // Count an ERROR as reading message, maybe joke service is broke
-		}
-		s.ChannelMessageSend(m.ChannelID, joke)
+	if strings.ToLower(m.Content) != "tell me a joke" {
+		return false
+	}
 
-		slog.Info("Dad joke sent",
-			"event", "joke_request_fulfilled",
+	jokeMu.Lock()
+	if time.Since(lastJokeTime) < jokeCooldown {
+		jokeMu.Unlock()
+		slog.Debug("Joke request rate limited",
+			"event", "joke_rate_limited",
 			"service", "dadbot")
+		return false
+	}
+	lastJokeTime = time.Now()
+	jokeMu.Unlock()
+
+	joke, err := getDadJoke()
+	if err != nil {
+		s.ChannelMessageSend(m.ChannelID, "Gosh dang joke AI always breakin. Tell Clutch to fix it.")
+		slog.Error("Failed to fetch dad joke",
+			"event", "joke_request_failed",
+			"service", "dadbot",
+			"error", err.Error())
 		return true
 	}
-	return false
+	s.ChannelMessageSend(m.ChannelID, joke)
+
+	slog.Info("Dad joke sent",
+		"event", "joke_request_fulfilled",
+		"service", "dadbot")
+	return true
 }
 
 func handleDadResponse(s *discordgo.Session, m *discordgo.MessageCreate) bool {
@@ -217,8 +253,7 @@ func getDadJoke() (string, error) {
 	}
 	req.Header.Set("Accept", "text/plain")
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return "", err
 	}
