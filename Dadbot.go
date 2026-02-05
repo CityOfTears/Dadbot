@@ -40,7 +40,7 @@ var (
 	goodnightMessages = []string{
 		"Goodnight Snore-osaurus Rex.",
 		"Goodnight? I’ll try… but I’ve been practicing for the greatnight.",
-		“Goodnight! Sleep tight!”,
+		"Goodnight! Sleep tight!",
 		"Goodnight? Careful… last time I went to bed early, I woke up in tomorrow.",
 		"Goodnight! Don’t let the bedbugs byte… they’re terrible at debugging.",
 		"Don't forget to brush your teeth",
