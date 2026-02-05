@@ -21,7 +21,8 @@ var (
 	token      = flag.String("t", "", "Bot Token")
 	dadRegex   = regexp.MustCompile(`(?i)\bI'?m\s+(.+)`)
 	pauseRegex = regexp.MustCompile(`(?i)\b(cigs|cigarette(s)?|milk)\b`)
-
+	catgirlRegex = regexp.MustCompile(`(?i)\b(budget|money|dollar?)\b`)
+	thermostatRegex = regexp.MustCompile(`(?i)\btoo (hot|cold)\b`)
 	// Pause state protected by mutex to prevent race conditions
 	// when multiple Discord messages are processed concurrently
 	pauseMu  sync.RWMutex
@@ -38,8 +39,17 @@ var (
 	goodnightCooldown = 3 * time.Second
 	goodnightMessages = []string{
 		"Goodnight Snore-osaurus Rex.",
+		"Goodnight? I’ll try… but I’ve been practicing for the greatnight.",
+		“Goodnight! Sleep tight!”,
+		"Goodnight? Careful… last time I went to bed early, I woke up in tomorrow.",
+		"Goodnight! Don’t let the bedbugs byte… they’re terrible at debugging.",
+		"Don't forget to brush your teeth",
+		
 	}
-
+	thermostatMessages = []String{
+		"Don't touch that thermostat!",
+		"Don't touch the thermostat! You don't pay the bills around here!",
+	}
 	httpClient = &http.Client{
 		Timeout: 10 * time.Second,
 	}
@@ -220,7 +230,36 @@ func handleGoodnightRequest(s *discordgo.Session, m *discordgo.MessageCreate) bo
 		"trigger", msg)
 	return true
 }
+func handleCatGirl  Request(s *discordgo.Session, m *discordgo.MessageCreate) bool {
+	matches := catgirlRegex.FindStringSubmatch(m.Content)
+	if len(matches) > 0 {
+		pauseWord := matches[0]
+		response := "Every dollar not spent on genetically engineering cat girls is a dollar wasted."
+		s.ChannelMessageSend(m.ChannelID, response)
 
+		slog.Info("Bot paused by trigger word",
+			"event", "meow_triggered",
+			"service", "dadbot",
+			"trigger", msg)
+		return true
+	}
+	return false
+}
+func handleThermostat  Request(s *discordgo.Session, m *discordgo.MessageCreate) bool {
+	matches := thermostatRegex.FindStringSubmatch(m.Content)
+	if len(matches) > 0 {
+		pauseWord := matches[0]
+		response := goodnightMessages[rand.Intn(len(thermostatMessages))]
+		s.ChannelMessageSend(m.ChannelID, response)
+
+		slog.Info("Bot paused by trigger word",
+			"event", "thermostat_triggered",
+			"service", "dadbot",
+			"trigger", msg)
+		return true
+	}
+	return false
+}
 func handleJokeRequest(s *discordgo.Session, m *discordgo.MessageCreate) bool {
 	if strings.ToLower(m.Content) != "tell me a joke" {
 		return false
