@@ -46,7 +46,7 @@ var (
 		"Don't forget to brush your teeth",
 		
 	}
-	thermostatMessages = []String{
+	thermostatMessages = []string{
 		"Don't touch that thermostat!",
 		"Don't touch the thermostat! You don't pay the bills around here!",
 	}
@@ -103,7 +103,7 @@ func createDiscordSession(token string) (*discordgo.Session, error) {
 	}
 
 	discord.AddHandler(messageCreate)
-	discord.Identify.Intents = discordgo.IntentsGuildMessages
+	discord.Identify.Intents = discordgo.IntentsGuildMessages | discordgo.IntentsMessageContent
 
 	if err := discord.Open(); err != nil {
 		return nil, err
@@ -130,10 +130,12 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 
 	// Process triggers in priority order, stop after first match
 	responseSent := handlePauseTrigger(s, m) ||
+		handleThermostatRequest(s, m) ||
 		handleDadResponse(s, m) ||
 		handleWinLoseTrigger(s, m) ||
 		handleJokeRequest(s, m) ||
-		handleGoodnightRequest(s, m)
+		handleGoodnightRequest(s, m) ||
+		handleCatGirlRequest(s, m)
 
 	// Log non-dad-response messages
 	if !responseSent {
@@ -230,32 +232,32 @@ func handleGoodnightRequest(s *discordgo.Session, m *discordgo.MessageCreate) bo
 		"trigger", msg)
 	return true
 }
-func handleCatGirl  Request(s *discordgo.Session, m *discordgo.MessageCreate) bool {
+func handleCatGirlRequest(s *discordgo.Session, m *discordgo.MessageCreate) bool {
 	matches := catgirlRegex.FindStringSubmatch(m.Content)
 	if len(matches) > 0 {
-		pauseWord := matches[0]
+		matchWord := matches[0]
 		response := "Every dollar not spent on genetically engineering cat girls is a dollar wasted."
 		s.ChannelMessageSend(m.ChannelID, response)
 
 		slog.Info("Bot paused by trigger word",
 			"event", "meow_triggered",
 			"service", "dadbot",
-			"trigger", msg)
+			"trigger", matchWord)
 		return true
 	}
 	return false
 }
-func handleThermostat  Request(s *discordgo.Session, m *discordgo.MessageCreate) bool {
+func handleThermostatRequest(s *discordgo.Session, m *discordgo.MessageCreate) bool {
 	matches := thermostatRegex.FindStringSubmatch(m.Content)
 	if len(matches) > 0 {
-		pauseWord := matches[0]
-		response := goodnightMessages[rand.Intn(len(thermostatMessages))]
+		matchWord := matches[0]
+		response := thermostatMessages[rand.Intn(len(thermostatMessages))]
 		s.ChannelMessageSend(m.ChannelID, response)
 
 		slog.Info("Bot paused by trigger word",
 			"event", "thermostat_triggered",
 			"service", "dadbot",
-			"trigger", msg)
+			"trigger", matchWord)
 		return true
 	}
 	return false
